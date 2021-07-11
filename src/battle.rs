@@ -1,31 +1,35 @@
-
-use std::cmp;
 use std::cell::RefCell;
+use std::cmp;
+use std::pin::Pin;
+use std::marker::PhantomPinned;
+use std::ptr::NonNull;
+
+use crate::rng::*;
 
 #[derive(Clone)]
-struct Hero {
-  stats: HeroStats,
+pub struct Hero {
+  pub stats: HeroStats,
 
-  alive: bool,
-  readiness: u32,
-  effects: Effects,
-  team: u32,
+  pub alive: bool,
+  pub readiness: u32,
+  pub effects: Effects,
+  pub team: u32,
 }
 
 #[derive(Clone)]
-struct HeroStats {
-  max_hp: f32,
-  hp: f32,
-  atk: f32,
-  spd: f32,
-  def: f32,
-  cc: f32,
-  cdmg: f32,
-  eff: f32,
-  effres: f32,
-  element: Element,
-  hit_chance: f32,
-  crit_resist: f32,
+pub struct HeroStats {
+  pub max_hp: f32,
+  pub hp: f32,
+  pub atk: f32,
+  pub spd: f32,
+  pub def: f32,
+  pub cc: f32,
+  pub cdmg: f32,
+  pub eff: f32,
+  pub effres: f32,
+  pub element: Element,
+  pub hit_chance: f32,
+  pub crit_resist: f32,
 }
 
 impl Hero {
@@ -63,7 +67,7 @@ impl Hero {
     if success {
       match effect.get_kind() {
         EffectKind::StatModifier(stat, modf) => self.add_stat_change(stat, modf),
-        EffectKind::Simple => ()
+        EffectKind::Simple => (),
       }
     }
   }
@@ -77,26 +81,42 @@ impl Hero {
     use EffectKind::*;
     match effect.get_kind() {
       StatModifier(stat, modf) => self.remove_stat_change(stat, modf),
-      Simple => ()
+      Simple => (),
     }
   }
 
   fn consume_effects(&mut self, mut f: impl FnMut(&EffectEntry) -> u32) {
-    self.effects.consume_effects(f).iter().for_each(|removed| self.undo_stat_changes(removed.effect));
+    self
+      .effects
+      .consume_effects(f)
+      .iter()
+      .for_each(|removed| self.undo_stat_changes(removed.effect));
   }
 }
 
 #[derive(Copy, Clone)]
-enum Element {
-  Fire, Ice, Earth, Light, Dark
+pub enum Element {
+  Fire,
+  Ice,
+  Earth,
+  Light,
+  Dark,
 }
 
 #[derive(Copy, Clone)]
 enum StatKind {
-  SPD, ATK, DEF, CC, CDmg, EffRes, EFF, HitChance, CritResist
+  SPD,
+  ATK,
+  DEF,
+  CC,
+  CDmg,
+  EffRes,
+  EFF,
+  HitChance,
+  CritResist,
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 enum Effect {
   AtkBuff,
   AtkDown,
@@ -121,14 +141,14 @@ enum Effect {
 
 enum EffectKind {
   StatModifier(StatKind, f32),
-  Simple
+  Simple,
 }
 
 impl Effect {
   fn get_kind(&self) -> EffectKind {
-    use StatKind::*;
     use Effect::*;
     use EffectKind::*;
+    use StatKind::*;
     match self {
       GreaterAtk => StatModifier(ATK, 0.75),
       AtkBuff => StatModifier(ATK, 0.5),
@@ -137,7 +157,7 @@ impl Effect {
       SpdBuff => StatModifier(SPD, 0.3),
       SpdDown => StatModifier(SPD, -0.3),
       Effect::CritResist => StatModifier(StatKind::CritResist, 0.5),
-      _ => Simple
+      _ => Simple,
     }
   }
 
@@ -146,7 +166,7 @@ impl Effect {
 
     match self {
       Rage | Daydream => false,
-      _ => true
+      _ => true,
     }
   }
 
@@ -155,7 +175,7 @@ impl Effect {
 
     match self {
       Burn(_) | Bleed(_) | Poison | ContinuousHealing => true,
-      _ => false
+      _ => false,
     }
   }
 
@@ -165,7 +185,7 @@ impl Effect {
     match (first, second) {
       (AtkBuff, GreaterAtk) => EffectPriority::First,
       (GreaterAtk, AtkBuff) => EffectPriority::Second,
-      _ => EffectPriority::NoOverwrite
+      _ => EffectPriority::NoOverwrite,
     }
   }
 }
@@ -173,11 +193,11 @@ impl Effect {
 enum EffectPriority {
   First,
   Second,
-  NoOverwrite
+  NoOverwrite,
 }
 
 #[derive(Clone)]
-struct Effects {
+pub struct Effects {
   arr: Vec<EffectEntry>,
 }
 
@@ -190,20 +210,30 @@ struct EffectEntry {
 const EFFECT_MAX_COUNT: usize = 10;
 
 impl Effects {
+  pub fn new() -> Self {
+    Effects { arr: vec![] }
+  }
+
   fn apply(&mut self, effect: Effect, duration: u32) -> (bool, Option<Effect>) {
-    let entry = EffectEntry { effect: effect, duration: duration };
+    let entry = EffectEntry {
+      effect: effect,
+      duration: duration,
+    };
     let eff = self;
 
     if !effect.can_stack() {
-      let exist = eff.arr.iter().position(|entry|
-        matches!(Effect::get_priority(effect, entry.effect), EffectPriority::First)
-      );
+      let exist = eff.arr.iter().position(|entry| {
+        matches!(
+          Effect::get_priority(effect, entry.effect),
+          EffectPriority::First
+        )
+      });
 
       if let Some(exist) = exist {
         let temp = eff.arr[exist].effect;
         eff.arr[exist] = entry;
 
-        return (true, Some(temp))
+        return (true, Some(temp));
       }
     }
 
@@ -221,7 +251,12 @@ impl Effects {
   }
 
   fn get_bleed_effects<'a>(&'a self) -> impl Iterator<Item = &EffectEntry> + 'a {
-    self.arr.iter().filter(|x| matches!(x.effect, Effect::Burn(_) | Effect::Bleed(_) | Effect::Poison))
+    self.arr.iter().filter(|x| {
+      matches!(
+        x.effect,
+        Effect::Burn(_) | Effect::Bleed(_) | Effect::Poison
+      )
+    })
   }
 
   fn dispel(&mut self, num_debuffs: u32) -> Vec<Effect> {
@@ -253,7 +288,7 @@ impl Effects {
       let turns_consumed = f(entry);
       entry.duration -= turns_consumed;
       if entry.duration < 1 {
-          removed.push(self.arr.remove(i));
+        removed.push(self.arr.remove(i));
       } else {
         i += 1;
       }
@@ -263,16 +298,17 @@ impl Effects {
 }
 
 #[derive(Clone)]
-struct BattleSnapshot {
-  heroes: Vec<Hero>,
-  base_stats: Vec<Hero>
+pub struct BattleSnapshot {
+  pub heroes: Vec<Hero>,
+  pub base_stats: Vec<Hero>,
 }
 
 type HeroID = usize;
 
 impl BattleSnapshot {
   fn get_turn_hero_id(&self) -> HeroID {
-    (0..).zip(&self.heroes)
+    (0..)
+      .zip(&self.heroes)
       .filter(|(_, x)| x.alive)
       .max_by(|(_, x), (_, y)| x.readiness.cmp(&y.readiness))
       .map(|(i, _)| i)
@@ -286,12 +322,12 @@ impl BattleSnapshot {
 
 enum DamageSource<'a> {
   Hero(&'a Hero),
-  Effect
+  Effect,
 }
 
 fn deal_damage(src: DamageSource, target: &mut Hero, dmg: &DamageInstance) -> bool {
   if target.effects.has_effect(Effect::Invincible) {
-    return false
+    return false;
   }
 
   if matches!(src, DamageSource::Hero(_)) {
@@ -300,7 +336,9 @@ fn deal_damage(src: DamageSource, target: &mut Hero, dmg: &DamageInstance) -> bo
       if matches!(entry.effect, Effect::SkillNull) {
         has_skill_null = true;
         1
-      } else { 0 }
+      } else {
+        0
+      }
     });
     if has_skill_null {
       return false;
@@ -317,7 +355,7 @@ fn deal_damage(src: DamageSource, target: &mut Hero, dmg: &DamageInstance) -> bo
 
 fn heal(target: &mut Hero, amount: f32) -> bool {
   if target.effects.has_effect(Effect::Unhealable) {
-    return false
+    return false;
   }
   target.stats.hp = target.stats.hp + amount;
   if target.stats.hp > target.stats.max_hp {
@@ -332,7 +370,7 @@ fn calculate_damage_taken(src: DamageSource, target: &Hero, raw_dmg: &DamageInst
 
 struct DamageInstance {
   raw_dmg: f32,
-  def_pen: f32
+  def_pen: f32,
 }
 
 fn hero_on_turn_start(hero: &mut Hero) {
@@ -343,22 +381,26 @@ fn hero_on_turn_start(hero: &mut Hero) {
   let mut auto_heal = 0_f32;
 
   let hero_hp = hero.stats.max_hp;
-  hero.consume_effects(|entry| {
-    match entry.effect {
-      Burn(dmg) | Bleed(dmg) => {
-        bleed_dmg.push(DamageInstance { raw_dmg: dmg, def_pen: 0.7 });
-        1
-      },
-      Poison => {
-        bleed_dmg.push(DamageInstance { raw_dmg: hero_hp * 0.05, def_pen: 1.0 });
-        1
-      },
-      ContinuousHealing => {
-        auto_heal += hero_hp * 0.15;
-        1
-      }
-      _ => 0,
+  hero.consume_effects(|entry| match entry.effect {
+    Burn(dmg) | Bleed(dmg) => {
+      bleed_dmg.push(DamageInstance {
+        raw_dmg: dmg,
+        def_pen: 0.7,
+      });
+      1
     }
+    Poison => {
+      bleed_dmg.push(DamageInstance {
+        raw_dmg: hero_hp * 0.05,
+        def_pen: 1.0,
+      });
+      1
+    }
+    ContinuousHealing => {
+      auto_heal += hero_hp * 0.15;
+      1
+    }
+    _ => 0,
   });
 
   let mut total_dmg = 0_f32;
@@ -366,83 +408,136 @@ fn hero_on_turn_start(hero: &mut Hero) {
     total_dmg += calculate_damage_taken(DamageSource::Effect, hero, dmg);
   }
   if total_dmg > auto_heal {
-    deal_damage(DamageSource::Effect, hero, &DamageInstance { raw_dmg: total_dmg - auto_heal, def_pen: 1.0});
+    deal_damage(
+      DamageSource::Effect,
+      hero,
+      &DamageInstance {
+        raw_dmg: total_dmg - auto_heal,
+        def_pen: 1.0,
+      },
+    );
   } else {
     heal(hero, auto_heal - total_dmg);
   }
 }
 
-fn hero_on_turn_end(hero: &Hero) {
+fn hero_on_turn_end(hero: &Hero) {}
 
+enum EffectSource {
+  Enemy(HeroID),
+  SelfTargeted,
 }
 
-enum EffectSource<'a> {
-  Enemy(&'a Hero),
-  SelfTargeted
-}
-
-fn apply_effect(src: EffectSource, target: &mut Hero, effect: Effect, duration: u32, chance: f32, rng: &mut RngStream) {
-  match src {
-    EffectSource::SelfTargeted => target.apply_effect(effect, duration),
-    EffectSource::Enemy(enemy) => {
-      let eff = enemy.stats.eff;
-      let resist = target.stats.effres;
-      let chance = f32::min(0.85, chance * f32::max(0.0, eff - resist));
-      rng.with_chance(chance, |rng| {
-        let snapshot = &rng.snapshot;
-
-      });
-    }
-  }
-}
-
-fn battle_tick<'a>(old: BattleSnapshot) -> BattleSnapshot {
-  let mut battle = old.clone();
-
-  let hero_id = battle.get_turn_hero_id();
-  let hero = &mut battle.heroes[hero_id];
-
-  hero_on_turn_start(hero);
-
-  hero_on_turn_end(hero);
-
-  battle
-}
-
-struct RngStream<'a> {
-  branches: Vec<(f32, Box<dyn FnOnce(&mut RngStream) + 'a>)>,
-  finally: Option<Box<dyn FnOnce(&mut RngStream) + 'a>>,
-  snapshot: BattleSnapshot,
-}
-
-impl<'a> RngStream<'a> {
-
-  fn with_chance(&mut self, chance: f32, f: impl FnOnce(&mut RngStream) + 'a) {
-    let boxed = Box::new(f);
-    self.branches.push((chance, boxed));
-  }
-
-  fn then(&mut self, f: impl FnOnce(&mut RngStream) + 'a) {
-    self.finally = Some(Box::new(f));
-  }
-
-  fn run(&mut self, snapshot: &mut BattleSnapshot, index: usize) -> RngStream {
-    let (chance, f) = self.branches.remove(index);
-    let mut res = RngStream {
-      branches: vec![],
-      finally: None,
-      snapshot: self.snapshot.clone(),
-    };
-    f(&mut res);
-    if let Some(f) = self.finally.take() {
-      f(&mut res);
-    }
-    res
-  }
-}
-
-struct Possibility<T> {
-  label: &'static str,
+fn apply_effect<'a>(
+  snapshot: &BattleSnapshot,
+  src: EffectSource,
+  target: HeroID,
+  effect: Effect,
+  duration: u32,
   chance: f32,
-  event: Box<dyn Fn(&mut T)>,
+) -> RngNode<BattleSnapshot> {
+  let effect_proc = move |ss: &mut BattleSnapshot| {
+    let target = &mut ss.heroes[target];
+    target.apply_effect(effect, duration);
+    RngNode::End
+  };
+  match src {
+    EffectSource::SelfTargeted => RngNode::always(effect_proc),
+    EffectSource::Enemy(enemy) => {
+      let enemy = &snapshot.heroes[enemy];
+      let _target = &snapshot.heroes[target];
+      let eff = enemy.stats.eff;
+      let resist = _target.stats.effres;
+      let chance = f32::min(0.85, chance * f32::max(0.0, eff - resist));
+      RngNode::branch_two(chance, effect_proc).or(|_| RngNode::End)
+    }
+  }
 }
+
+pub trait SkillPicker: Sync {
+  fn pick_skill(&self, snapshot: &BattleSnapshot, hero: HeroID) -> &Skill;
+}
+
+struct Skill {
+  targeting: Targeting,
+  actions: Vec<SkillAction>,
+}
+
+enum SkillAction {
+  Effect(Effect, f32, u32),
+  Damage(DamageInstance),
+  Heal(f32, Targeting),
+  Splash(f32),
+}
+
+#[derive(Copy, Clone)]
+enum Targeting {
+  SelfAOE,
+  EnemyAOE,
+  SelfSingle,
+  EnemySingle,
+}
+
+fn get_target(target: Targeting, ss: &BattleSnapshot) -> HeroID {
+  0
+}
+
+fn use_skill<'a>(skill: &'static Skill, src: HeroID) -> RngNode<BattleSnapshot> {
+  use SkillAction::*;
+
+  let mut rng = RngNode::End;
+
+  for action in &skill.actions {
+    rng = rng.then(move |ss|
+      match action {
+        &Effect(eff, chance, dur) => {
+          apply_effect(ss, EffectSource::Enemy(src), get_target(skill.targeting, ss), eff, dur, chance)
+        }
+
+        _ => panic!("Not implemented"),
+      }
+    )
+  }
+  rng.set_label(format!("Skill used"))
+}
+
+pub fn turn_start(picker: &'static impl SkillPicker) -> RngNode<BattleSnapshot> {
+    RngNode::always(move |ss: &mut BattleSnapshot| {
+      if !ss.heroes.iter().any(|x| x.alive) {
+        return RngNode::End
+      }
+
+      let hero = ss.get_turn_hero_id();
+      hero_on_turn_start(&mut ss.heroes[hero]);
+
+      let skill = picker.pick_skill(ss, hero);
+
+      use_skill(skill, hero)
+    })
+}
+
+
+// fn execute_rng_serial(node: RngNode, initial_ss: BattleSnapshot) {
+//   use RngNode::*;
+
+//   let mut next = node;
+//   let mut result = initial_ss;
+
+//   // TODO: build a stack
+
+//   loop {
+//     match next {
+//       End => break,
+//       Always(action) => {
+//         result = result.clone();
+//         next = action(&mut result);
+//       },
+//       Two(a1, a2) => {
+//         result = result.clone();
+//         next = (a1.action)(&mut result);
+//       },
+//       _ => panic!()
+//     }
+//   }
+// }
+
