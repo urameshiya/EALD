@@ -1,45 +1,108 @@
 
-pub enum RngNode<T> {
+pub enum RngNode<'r, T> {
   End,
-  Always(RngAction<T>),
-  Two(RngInstance<T>, RngInstance<T>),
+  Always(RngAction<'r, T>),
+  Two(RngInstance<'r, T>, RngInstance<'r, T>),
   Label(String, Box<Self>),
 }
 
-type RngAction<T> = Box<dyn FnOnce(&mut T) -> RngNode<T> + Send>;
+type RngAction<'r, T> = Box<dyn FnOnce(&mut T) -> RngNode<'r, T> + Send + 'r>;
 
-pub struct RngInstance<T> {
+pub struct RngInstance<'r, T> {
   chance: f32,
-  action: RngAction<T>,
+  action: RngAction<'r, T>,
 }
 
-impl<T> RngInstance<T> {
-  pub fn run_action(self, ss: &mut T) -> RngNode<T> {
+impl<'r, T> RngInstance<'r, T> {
+  pub fn run_action(self, ss: &mut T) -> RngNode<'r,T> {
     (self.action)(ss)
   }
 }
 
 // constructors
-impl<T> RngNode<T> {
-  pub fn always(f: impl FnOnce(&mut T) -> RngNode<T> + Send + 'static) -> Self {
+impl<'r, T: 'r> RngNode<'r, T> {
+  pub fn always(f: impl FnOnce(&mut T) -> Self + Send + 'r) -> Self {
     RngNode::Always(Box::new(f))
   }
 
   pub fn branch_two(
     chance: f32,
-    f: impl FnOnce(&mut T) -> RngNode<T> + Send + 'static,
-  ) -> RngNodeNeedOne<T> {
+    f: impl FnOnce(&mut T) -> Self + Send + 'r,
+  ) -> RngNodeNeedOne<'r, T> {
     RngNodeNeedOne(RngInstance {
       chance,
       action: Box::new(f),
     })
   }
+
+  // Create a sequence of 'then' nodes from each element of arr.
+  pub fn for_each<'a, VecElement, Element>(
+    arr: &'a Vec<VecElement>,
+    f: impl FnOnce(&mut T, Element) -> Self + Send + Copy + 'r
+  ) -> Self
+    where 'r: 'a,
+          VecElement: RngLifetimePreservable<'a, 'r, Element>,
+          Element: Send + Clone + 'r
+  {
+    let mut rng = RngNode::End;
+    for item in arr {
+      let f = f;
+      let item = item.preserve_lifetime();
+      rng = rng.then(move |ss| {
+        f(ss, item)
+      });
+    }
+    rng
+  }
 }
+
+pub trait RngLifetimePreservable<'source, 'target, Target> {
+  fn preserve_lifetime(&'source self) -> Target where Target: 'target;
+}
+
+impl<'s, 't, T> RngLifetimePreservable<'s, 't, &'t T> for T where 's: 't {
+  fn preserve_lifetime(&'s self) -> &'t T {
+    self
+  }
+}
+
+impl<'s, 't, T> RngLifetimePreservable<'s, 't, T> for T where T: Copy {
+  fn preserve_lifetime(&'s self) -> T {
+    *self
+  }
+}
+
+// trait RngLifetimePreservable<T: ?Sized> {
+//   fn preserve_lifetime<'original, 'target>(original: &'original T) -> T;
+// }
+
+// impl<T> RngLifetimePreservable<T> for &'_ T where T: ?Sized {
+//   fn preserve_lifetime<'original, 'target>(original: &'original T) -> T {
+//     *original
+//   }
+// }
+
+// impl<T> RngLifetimePreservable<T> for T where T: Copy {
+//   fn preserve_lifetime<'o, 't>(original: &'o T) -> &'t T {
+
+//   }
+// }
+
+// trait Borrow<Borrowed: ?Sized> {
+// }
+
+// impl<T: ?Sized> Borrow<T> for T {
+
+// }
+
+// impl<T: ?Sized> Borrow<T> for &T {
+
+// }
 
 use RngNode::*;
 
-impl<T: 'static> RngNode<T> {
-  pub fn then(self, f: impl FnOnce(&mut T) -> RngNode<T> + Send + Clone + 'static) -> RngNode<T> {
+impl<'r, T: 'r> RngNode<'r, T> {
+  pub fn then(self, f: impl FnOnce(&mut T) -> Self + Send + Clone + 'r) -> Self  {
     match self {
       End => RngNode::always(move |ss| f(ss)),
       Always(action) => RngNode::always(move |ss| {
@@ -50,15 +113,15 @@ impl<T: 'static> RngNode<T> {
     }
   }
 
-  pub fn set_label(self, label: String) -> RngNode<T> {
+  pub fn set_label(self, label: String) -> Self {
     Label(label, Box::new(self))
   }
 }
 
-fn then_transform<T: 'static>(
-  mut instance: RngInstance<T>,
-  then: impl FnOnce(&mut T) -> RngNode<T> + Send + Clone + 'static,
-) -> RngInstance<T> {
+fn then_transform<'r, T: 'r>(
+  mut instance: RngInstance<'r, T>,
+  then: impl FnOnce(&mut T) -> RngNode<'r, T> + Send + Clone + 'r,
+) -> RngInstance<'r, T> {
   let old = instance.action;
   instance.action = Box::new(move |ss| {
     old(ss).then(then)
@@ -66,10 +129,10 @@ fn then_transform<T: 'static>(
   instance
 }
 
-pub struct RngNodeNeedOne<T>(RngInstance<T>);
+pub struct RngNodeNeedOne<'r, T>(RngInstance<'r, T>);
 
-impl<T> RngNodeNeedOne<T> {
-  pub fn or(self, f: impl FnOnce(&mut T) -> RngNode<T> + Send + 'static) -> RngNode<T> {
+impl<'r, T> RngNodeNeedOne<'r, T> {
+  pub fn or(self, f: impl FnOnce(&mut T) -> RngNode<'r, T> + Send + 'r) -> RngNode<'r, T> {
     let chance = 1.0 - self.0.chance;
     RngNode::Two(
       self.0,

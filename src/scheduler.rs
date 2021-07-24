@@ -5,6 +5,8 @@ use crate::{
 };
 use std::sync::{ Mutex, Arc };
 use lazy_static::lazy_static;
+use std::fmt;
+use std::thread;
 
 lazy_static! {
   static ref POOL: Mutex<ThreadPool> = Mutex::new(ThreadPool::new(8));
@@ -13,9 +15,16 @@ lazy_static! {
 pub trait RngObserver<T>: Send {
   fn rng_did_reach_label(&mut self, label: String);
   fn rng_did_reach_end(&mut self, ss: T, depth: i32);
+
+  fn should_pause_branching(&self) -> bool;
 }
 
-pub fn rng_node_run<O, T>(mut node: RngNode<T>, mut ss: T, observer: Arc<Mutex<O>>, depth: i32)
+pub fn rng_node_run<O, T>(
+  mut node: RngNode<'static, T>,
+  mut ss: T,
+  observer: Arc<Mutex<O>>,
+  depth: i32,
+)
   where O: RngObserver<T> + 'static,
         T: Clone + Send + 'static
 {
@@ -40,6 +49,10 @@ pub fn rng_node_run<O, T>(mut node: RngNode<T>, mut ss: T, observer: Arc<Mutex<O
         let pool = POOL.lock().unwrap();
 
         let mut _observer = Arc::clone(&observer);
+
+        // while observer.lock().unwrap().should_pause_branching() {
+        //   thread::park();
+        // }
 
         pool.execute(move || {
           let next = a1.run_action(&mut ss1);
@@ -74,6 +87,10 @@ impl RngObserver<BattleSnapshot> for DataCollector {
     println!("{}", ss.heroes[0].stats.hp);
     self.snapshots.push((depth, ss));
   }
+
+  fn should_pause_branching(&self) -> bool {
+    false
+  }
 }
 
 impl DataCollector {
@@ -101,6 +118,10 @@ mod tests {
     fn rng_did_reach_end(&mut self, ss: i32, depth: i32) {
       self.results.push(ss);
       inc_and_notify(self.lock.clone());
+    }
+
+    fn should_pause_branching(&self) -> bool {
+      false
     }
   }
 

@@ -1,6 +1,7 @@
 mod battle;
 mod scheduler;
 mod rng;
+mod skill;
 
 use battle::*;
 use std::sync::{ Mutex, Arc };
@@ -56,17 +57,3 @@ fn main() {
   // let battle = battle::turn_start(&ss);
   // scheduler::rng_node_run(battle, ss, Arc::new(Mutex::new(observer)), 0);
 }
-
-struct PrintObserver {
-
-}
-
-// impl RngObserver for PrintObserver {
-//   fn choose_branch(&self, branches: &Vec<Possibility>) -> Vec<usize> {
-//     (0..branches.len()).collect()
-//   }
-
-//   fn snapshot_did_compute(&self, ss: &BattleSnapshot, p: &Possibility) {
-//     println!("{}", p.label);
-//   }
-// }

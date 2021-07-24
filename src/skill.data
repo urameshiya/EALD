@@ -1,0 +1,13 @@
+Solitaria
+  S1:
+    AOE Damage
+    25% AOE stun
+    No dual attack
+  S2 (Passive):
+    Enemy no focus gain
+    On turn start, give Daydream if buffed.
+  S3:
+    Single decrease debuff duration 1 turn
+    Single stun 1 turn
+    Single decrease CR 30%
+    Give self stealth 2 turns

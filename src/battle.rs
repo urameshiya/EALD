@@ -1,10 +1,7 @@
-use std::cell::RefCell;
-use std::cmp;
-use std::pin::Pin;
-use std::marker::PhantomPinned;
-use std::ptr::NonNull;
-
-use crate::rng::*;
+use crate::{
+  rng::*,
+  skill::*
+};
 
 #[derive(Clone)]
 pub struct Hero {
@@ -117,7 +114,7 @@ enum StatKind {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
-enum Effect {
+pub enum Effect {
   AtkBuff,
   AtkDown,
   GreaterAtk,
@@ -215,7 +212,7 @@ impl Effects {
   }
 
   fn apply(&mut self, effect: Effect, duration: u32) -> (bool, Option<Effect>) {
-    let entry = EffectEntry {
+    let mut entry = EffectEntry {
       effect: effect,
       duration: duration,
     };
@@ -231,6 +228,7 @@ impl Effects {
 
       if let Some(exist) = exist {
         let temp = eff.arr[exist].effect;
+        entry.duration = u32::max(entry.duration, duration);
         eff.arr[exist] = entry;
 
         return (true, Some(temp));
@@ -303,7 +301,7 @@ pub struct BattleSnapshot {
   pub base_stats: Vec<Hero>,
 }
 
-type HeroID = usize;
+pub type HeroID = usize;
 
 impl BattleSnapshot {
   fn get_turn_hero_id(&self) -> HeroID {
@@ -428,14 +426,14 @@ enum EffectSource {
   SelfTargeted,
 }
 
-fn apply_effect<'a>(
-  snapshot: &BattleSnapshot,
+fn apply_effect<'a, 'b>(
+  snapshot: &'a BattleSnapshot,
   src: EffectSource,
   target: HeroID,
   effect: Effect,
   duration: u32,
   chance: f32,
-) -> RngNode<BattleSnapshot> {
+) -> RngNode<'b, BattleSnapshot> {
   let effect_proc = move |ss: &mut BattleSnapshot| {
     let target = &mut ss.heroes[target];
     target.apply_effect(effect, duration);
@@ -458,47 +456,24 @@ pub trait SkillPicker: Sync {
   fn pick_skill(&self, snapshot: &BattleSnapshot, hero: HeroID) -> &Skill;
 }
 
-struct Skill {
-  targeting: Targeting,
-  actions: Vec<SkillAction>,
-}
+fn use_skill<'a, 'b>(skill: &'a Skill, src: HeroID) -> RngNode<'b, BattleSnapshot> where 'a: 'b {
+  use crate::skill::SkillAction::*;
 
-enum SkillAction {
-  Effect(Effect, f32, u32),
-  Damage(DamageInstance),
-  Heal(f32, Targeting),
-  Splash(f32),
-}
+  RngNode::for_each(&skill.components, move |ss, comp| {
+    match comp.activate_condition {
+      Some(cond) if !cond(ss, &ss.heroes[src], &ss.heroes[src]) => return RngNode::End,
+      _ => ()
+    }
 
-#[derive(Copy, Clone)]
-enum Targeting {
-  SelfAOE,
-  EnemyAOE,
-  SelfSingle,
-  EnemySingle,
-}
-
-fn get_target(target: Targeting, ss: &BattleSnapshot) -> HeroID {
-  0
-}
-
-fn use_skill<'a>(skill: &'static Skill, src: HeroID) -> RngNode<BattleSnapshot> {
-  use SkillAction::*;
-
-  let mut rng = RngNode::End;
-
-  for action in &skill.actions {
-    rng = rng.then(move |ss|
-      match action {
-        &Effect(eff, chance, dur) => {
-          apply_effect(ss, EffectSource::Enemy(src), get_target(skill.targeting, ss), eff, dur, chance)
+    RngNode::for_each(&comp.targeting.get_target(ss, src), move |ss, target| {
+      match comp.action {
+        Effect { effect, chance, duration } => {
+          apply_effect(ss, EffectSource::Enemy(src), target, effect, duration, chance)
         }
-
         _ => panic!("Not implemented"),
       }
-    )
-  }
-  rng.set_label(format!("Skill used"))
+    })
+  }).set_label(format!("Skill used"))
 }
 
 pub fn turn_start(picker: &'static impl SkillPicker) -> RngNode<BattleSnapshot> {
@@ -516,28 +491,20 @@ pub fn turn_start(picker: &'static impl SkillPicker) -> RngNode<BattleSnapshot> 
     })
 }
 
+struct AISkillPicker {
 
-// fn execute_rng_serial(node: RngNode, initial_ss: BattleSnapshot) {
-//   use RngNode::*;
+}
 
-//   let mut next = node;
-//   let mut result = initial_ss;
+// impl SkillPicker for AISkillPicker {
+//   fn pick_skill(&self, snapshot: &BattleSnapshot, hero: HeroID) -> &Skill {
+//     let hero = &snapshot.heroes[hero];
 
-//   // TODO: build a stack
 
-//   loop {
-//     match next {
-//       End => break,
-//       Always(action) => {
-//         result = result.clone();
-//         next = action(&mut result);
-//       },
-//       Two(a1, a2) => {
-//         result = result.clone();
-//         next = (a1.action)(&mut result);
-//       },
-//       _ => panic!()
-//     }
 //   }
 // }
 
+enum BattleResult {
+  Win,
+  Draw,
+  Lose
+}
